@@ -19,7 +19,8 @@ New homes:
   call that could not have been wired up.
 - *Transforming a bbox across CRSes* (never in this plan, surfaced by the same
   discussion) →
-  [[file:../../nazca/plans/transform-bounds.org][nazca/plans/transform-bounds.org]].
+  =nazca/plans/transform-bounds.org=, which came back to this crate with
+  reprojection on 2026-10-22 as [[file:transform-bounds.org][transform-bounds.org]].
 
 *Why it moved -- two independent reasons, either sufficient:*
 1. *The premise was factually wrong.* This plan opens by framing the envelope

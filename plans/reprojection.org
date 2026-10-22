@@ -1,0 +1,269 @@
+#+TITLE: Plan: Reprojection Engine
+#+AUTHOR: Daniel Okuniewicz Jr.
+#+DATE: {{{time(%Y-%m-%d)}}}
+
+* Reprojection Engine
+
+** STATUS -- SCOPING ONLY, NOT YET IMPLEMENTED
+
+*** Moved from =nazca= to =geoscribe=, 2026-10-22 -- read this before the body
+Reprojection, and vector/raster math generally, now belongs to this crate
+(user decision), because the CRS database already lives here. =nazca= becomes a
+rendering library. This plan and [[file:transform-bounds.org][transform-bounds.org]]
+moved here unchanged, so *the body below is still written from nazca's
+position*: a crate with no CRS data, reaching a registry only through a trait
+the caller implements. Wherever it says "Nazca", read "this crate". Five things
+that position decided are now *open*, not settled:
+
+1. *The =CrsRegistry= trait's reason for existing.* It was there so nazca could
+   name a capability it did not have. This crate has the registry, so
+   =(authority, code)= resolution is in-crate (=resolve=). Whether a trait
+   remains, so a caller can plug in PostGIS, a live =proj.db= or a private
+   mirror, is now a choice, not a necessity.
+2. *The =proj-db= backend and its =rusqlite= question* (§ OPEN QUESTIONS)
+   existed because nazca had no data of its own. With the embedded registry it
+   is optional at best, and it would be this crate's first dependency.
+3. *The embedded registry holds CRS definitions only.* §§ Projection math and
+   datum shift's Helmert parameters, and any grid shift, come from the
+   *transformation* data, which =project.org= has listed as a non-goal. That
+   non-goal is reopened by this move (=project.org= § CHARTER).
+4. *Raster warping is now in charter.* The user's statement is "vector/raster
+   math"; § SCOPE's "raster is out of scope" is a sequencing statement now, as
+   it already was in nazca's charter.
+5. *R8, and vertical shift beyond it, has a real consumer*: writing KML heights
+   in EGM96 (=geosetta/plans/kml-standard.org= D-K12; =../../todo.org=). It
+   needs the geoid-grid vertical shift this plan defers *past* R8, not R8's 3D
+   Helmert.
+
+Still true after the move: no dependency edges in any direction
+(=../../architecture.org=), so geosetta reaches this math over a pipe or
+through a caller that links both crates, never by depending on this one.
+
+** WHY
+Geosetta converts geospatial *containers* (GeoJSON, GeoParquet, Shapefile,
+...) but [[file:../../geosetta/plans/reproject-composability.org][by design
+never reprojects the coordinates inside them]] -- it only *labels* a CRS and
+exposes two seams (=for_each_position_mut= for a linked-in library, =-=
+stdin/stdout for an external process) for something else to do the actual
+math. =geosetta/tests/reproject_pipe.rs= proved that seam against three real
+tools: GDAL's =ogr2ogr=, PROJ's =cs2cs=, and the =wbprojection= crate (linked
+directly, since it ships no binary). Nazca is written to be a fourth option
+that plugs into the same library seam =wbprojection= already validated --
+not a Geosetta subcrate, and not something Geosetta depends on: a peer crate
+a *caller* links alongside Geosetta and wires into that seam itself
+([[file:../../architecture.org][architecture.org]]).
+
+** SCOPE
+Reproject vector geometry -- points and their Multi- variants, and by
+extension lines/polygons via per-vertex visiting -- between any two CRSes
+that can be resolved to a complete definition. Raster warping is explicitly
+out of scope: it needs a coverage/grid IR and a resampling algorithm
+(nearest/bilinear/cubic + nodata handling), a different problem shape
+entirely, matching Geosetta's own vector-first/raster-later split.
+
+*v1 is horizontal (X/Y) only; 3D (Z-aware transform + vertical/3D datum
+shift) is in scope for Nazca eventually, stipulated now rather than left
+implicit.* This is a direct response to a gap found while scoping Geosetta's
+own Z/M work
+([[file:../../geosetta/plans/zm-geometry.org][zm-geometry.org]]): the
+=wbprojection= crate currently plugged into Geosetta's
+=for_each_position_mut= seam is 2D-only (=transform_to(x, y, ...) ->
+(x, y)=), so a Z-bearing point piped through it today has its Z pass
+through untouched -- correct as a *default*, but wbprojection specifically
+has no way to apply a vertical-datum shift even where a caller wants one.
+Nazca doesn't control wbprojection's scope, but it can plan to not share the
+limitation -- see § MILESTONES for where this lands (deferred past v1,
+alongside grid-based horizontal datum shift, not blocking R1-R7).
+
+** ARCHITECTURE
+
+*** CRS resolution is pluggable, not hardcoded
+"Work with any CRS database, at least the popular ones" means CRS lookup is
+a trait, not a fixed data source:
+
+#+begin_src rust
+pub trait CrsRegistry {
+    /// Look up (authority, code) -- e.g. ("EPSG", "4326") -- and return its
+    /// authoritative definition as WKT2:2019 or PROJJSON text, whichever
+    /// the backend natively stores. `None` if the code isn't found.
+    fn resolve(&self, authority: &str, code: &str) -> Option<CrsDefText>;
+}
+#+end_src
+
+A caller can already reproject *without* implementing this trait at all: if
+they hand over a complete WKT2/PROJJSON string themselves (the common case
+when the source format carries one inline, e.g. GeoParquet's PROJJSON or a
+GeoPackage's WKT1 =definition=), Nazca parses it directly -- no registry, no
+I/O, no third-party dataset. This is the same structural path Geosetta took
+when it dropped its own registry in 0.24.0, and is *why the default build
+stays dependency-free*: bare authority codes (=EPSG:4326= with no accompanying
+definition) are the only case that actually needs a registry.
+
+*The trait is the seam, and the caller is the implementor.* Nazca ships no
+backend that reads a sibling crate's data. Per
+[[file:../../architecture.org][architecture.org]], =nazca=, =geosetta= and
+=geoscribe= are peers with no dependency edges between them, so "resolve
+=EPSG:4326= against the embedded proj.db-derived registry" is something a
+*caller* wires up, in one of the two composition seams that architecture
+allows:
+
+#+begin_src rust
+// Caller-linked libraries, passing definition text across the boundary.
+// The caller depends on both crates; neither depends on the other.
+struct Geoscribe;
+impl nazca::CrsRegistry for Geoscribe {
+    fn resolve(&self, authority: &str, code: &str) -> Option<CrsDefText> {
+        geoscribe::resolve(authority, code).map(|r| CrsDefText::ProjJson(r.projjson))
+    }
+}
+#+end_src
+
+#+begin_src sh
+# Or the pipe seam, with no linking at all on either side.
+geoscribe EPSG:4326 --projjson | nazca --src-crs - ...
+#+end_src
+
+Both routes are Rule 1 (text at the boundary) in
+[[file:../../architecture.org][architecture.org]]'s terms: what crosses is
+WKT2/PROJJSON, an externally specified format neither crate owns, so there
+is nothing to couple on. Note this is *only* possible because
+=geoscribe::resolve= is a real public API returning a =CrsRecord= of strings
+([[file:../../geoscribe/plans/public-api.org][public-api.org]] R6) -- an
+earlier draft of this section argued for decoding the =GCR1= blob in-crate
+on the grounds that the lookup "lives in =geosetta=" behind =pub(crate)=
+=registry_wkt=/=registry_wkt2=. Both halves of that are now stale: geosetta
+dropped its registry entirely in 0.24.0, and geoscribe publishes the lookup.
+
+One backend ships in-crate, and it reads a file the *user* already has
+rather than another crate's data:
+
+- =proj-db= (feature =proj-db=) -- read a real, on-disk =proj.db= (or a
+  schema-compatible SQLite file) at runtime, for callers who already have
+  PROJ installed and want its exact, current dataset. See § OPEN QUESTIONS
+  for how to read it.
+
+Anyone can also implement the trait against their own source (PostGIS's
+=spatial_ref_sys=, a private mirror, an offline CSV extract) -- that is the
+same mechanism the =geoscribe= example above uses, not a lesser one.
+
+*** CRS definition model
+A =CrsDef= is the parsed, structural result of either path above --
+ellipsoid (semi-major axis + inverse flattening), prime meridian, geodetic
+datum (name/id, optionally a Helmert-to-WGS84 tuple), axis order/units, and
+either =Geographic= or =Projected { method, params: Vec<(ParamKind, f64)> }=.
+This shape is deliberately close to PROJJSON's, since that's the more
+regular of the two formats to parse and the dialect a caller-side
+=geoscribe= implementor hands back (§ CRS RESOLUTION). A WKT2:2019 parser is still needed for backends (like a
+live =proj.db=) that hand back WKT rather than PROJJSON -- reusing the same
+method/parameter-name crosswalk idea =geosetta='s =wkt1_tables.rs= already
+proved out, just aimed at WKT2 instead of WKT1.
+
+*** Projection math and datum shift
+Forward/inverse formulas for the common method families (Mercator/Web
+Mercator, Transverse Mercator/UTM, Lambert Conformal Conic, Albers
+Equal-Area, polar/oblique Stereographic), keyed off the parsed method name.
+Datum shift between two different geodetic datums is Helmert (7- or
+3-parameter) via geographic -> geocentric -> geographic in v1 --
+*not* grid-based. See § OPEN QUESTIONS for the accuracy gap this leaves.
+
+*** The composability seam
+The public surface matches the shape =wbprojection= already proved works in
+=composes_with_wbprojection_library=:
+
+#+begin_src rust
+let src = nazca::Crs::from_epsg(4326)?;   // or ::from_wkt2 / ::from_projjson
+let dst = nazca::Crs::from_epsg(3857)?;
+let (x, y) = src.transform_to(x, y, &dst)?;
+#+end_src
+
+No dependency on Geosetta's =FeatureCollection= or any container format --
+just point-at-a-time (and, later, iterator/batch) transforms, so a caller
+wires it into whatever coordinate-visiting hook their own IR exposes.
+
+=transform_to= is deliberately 2D (X/Y) for v1. A 3D sibling --
+=transform_to_3d(x, y, z, &dst) -> Result<(f64, f64, f64)>= is the planned
+shape once R6's Helmert datum shift work exists to back it (see §
+MILESTONES) -- not a redesign of this seam, an addition alongside it, so
+existing 2D callers are unaffected.
+
+** MILESTONES
+- *R1* -- =CrsDef= core type + PROJJSON structural parser. Geographic CRSes
+  only (ellipsoid/datum/prime-meridian/axis-order), so geographic-to-geographic
+  datum-shift-only transforms (e.g. NAD27 -> WGS84) are correctness-testable
+  before any projection math exists.
+- *R2* -- WKT2:2019 structural parser into the same =CrsDef=, for backends
+  that return WKT rather than PROJJSON.
+- *R3* -- =CrsRegistry= trait, feeding R1/R2's parser. Trait definition and
+  =CrsDefText= only -- no in-crate registry data and no blob decoding. Proven
+  by a test-only implementor (a fixture map, plus optionally a
+  =dev-dependencies= impl over =geoscribe::resolve= to exercise the real
+  caller-side shape without making it a build dependency).
+- *R4* -- =proj-db= backend: query a live =proj.db= for the same lookup.
+- *R5* -- Projection method implementations (forward + inverse) for the
+  method families listed above, oracle-checked against real =cs2cs=/
+  =ogr2ogr= output the way =geosetta/tests/reproject_pipe.rs= already does
+  (skip-if-tool-missing at runtime, not a hard test dependency).
+- *R6* -- Helmert datum shift between geodetic datums, via geographic ->
+  geocentric -> geographic. Note this conversion is *already* inherently 3D
+  under the hood (geocentric X/Y/Z needs an ellipsoidal height input, v1
+  defaulting it to 0 for horizontal-only callers) -- R6 doesn't need new
+  math to become Z-aware, only a caller-facing way to supply and receive a
+  real height, which is R8's job.
+- *R7* -- Public =Crs=/=transform_to= seam + point/iterator/batch entry
+  points; verify it drops into Geosetta's =for_each_position_mut= as a
+  straight swap for =wbprojection= in a local experiment.
+- *R8 (planned, deferred past v1)* -- =transform_to_3d= seam + 3D Helmert
+  (real ellipsoidal height in and out, not the R6 default-to-0 shortcut).
+  Stipulated now, per
+  [[file:../project.org][project.org]]'s roadmap, as the direct answer to
+  =wbprojection='s 2D-only limitation surfaced while scoping Geosetta's
+  [[file:../../geosetta/plans/zm-geometry.org][zm-geometry.org]]. Vertical-
+  datum/geoid-model shift (NAVD88<->ellipsoidal height via a geoid grid,
+  e.g. GEOID18/EGM2008 -- a different, grid-based problem from the
+  ellipsoid-to-ellipsoid Helmert shift R6/R8 do) is its own further-out
+  milestone, not implied by R8 -- flagging the distinction now so R8 isn't
+  later assumed to cover vertical-datum accuracy it doesn't.
+- *Deferred, explicitly out of v1*: grid-based *horizontal* datum shift
+  (NADCON5/NTv2 -- large binary grids, needed for full accuracy on pairs
+  like NAD27<->NAD83(2011)); grid-based *vertical* datum shift (geoid
+  models, see R8 above); R8 itself (3D transform seam); PROJ-style
+  multi-pipeline selection when more than one transformation path exists
+  between two CRSes with different area-of-use/accuracy ratings (v1 always
+  takes the single Helmert path); raster.
+
+** OPEN QUESTIONS
+- *Zstd for the =geoscribe= backend -- CLOSED, dissolved (2026-08-18).* This
+  asked whether to hand-roll a zstd decoder or pull =ruzstd= behind a
+  =geoscribe= feature. There is no =geoscribe= feature and no in-crate
+  backend: Nazca never sees the =GCR1= blob, so it needs no zstd decoder of
+  any kind. A caller that wants the embedded registry links =geoscribe=
+  itself and hands the resulting text across the trait (§ CRS RESOLUTION);
+  the decompression stays where the data is.
+- *SQLite for the =proj-db= backend* -- =proj.db='s schema is materially more
+  relational than what Geosetta's from-scratch GeoPackage reader needs
+  (=crs_view= is a multi-table join, plus =alias_name=, =helmert_transformation=,
+  =grid_transformation=): a real SQL engine earns its keep here in a way it
+  didn't for GeoPackage's narrow geometry/attribute reads. Leaning
+  =rusqlite= (bundled, so no system libsqlite3 requirement) over a
+  hand-rolled reader, but this is now the *only* dependency call in the whole
+  plan -- with the =geoscribe= backend gone, =proj-db= is the sole in-crate
+  backend and =rusqlite= the sole non-dev dependency it would add. Worth
+  confirming before R4, including the prior question of whether =proj-db=
+  should ship in-crate at all rather than being another caller-implemented
+  =CrsRegistry= like the rest.
+- *Transformation-pipeline selection* -- PROJ picks among multiple
+  accuracy/area-of-use-rated paths between two datums; v1's single-Helmert-path
+  approach will be measurably less accurate than PROJ for datum pairs that
+  really need a grid shift. Worth documenting the expected error magnitude
+  once R6 lands, the same way =geoscribe/plans/crs-registry.org= measured
+  structural-translation failure rates before committing to the registry
+  pivot.
+- ~~*Naming*~~ /Moot since the move to geoscribe, 2026-10-22./ -- =nazca= as the crate/package name (crates.io availability not
+  yet checked).
+- *R8 scope-of-accuracy* -- does R8's 3D Helmert alone satisfy real callers,
+  or does "3D datum shift" in practice mean vertical-datum/geoid accuracy
+  from day one (a materially bigger, grid-based lift, same shape as the
+  already-deferred horizontal grid-shift item)? Revisit once Geosetta's
+  =zm-geometry.org= actually lands and there's a real Z-bearing source
+  (LIDAR/survey data) to test R8 against, rather than guessing the accuracy
+  bar upfront.

@@ -1,0 +1,148 @@
+#+TITLE: Plan: Transforming a Bounding Box Across CRSes
+#+AUTHOR: Daniel Okuniewicz Jr.
+#+DATE: {{{time(%Y-%m-%d)}}}
+
+* Transforming a Bounding Box Across CRSes
+
+** STATUS -- SCOPING ONLY, NOT YET IMPLEMENTED
+Depends on [[file:reprojection.org][reprojection.org]]'s R5 (projection math)
+and R7 (the =Crs=/=transform_to= seam); there is nothing to build here until a
+point can be transformed at all. Sequenced after them, not beside them.
+
+/Moved from =nazca= to =geoscribe= on 2026-10-22, with reprojection itself
+(see [[file:reprojection.org][reprojection.org]] § STATUS). The body is
+unchanged. Where it says "Nazca" or "this crate", read =geoscribe=, and
+=../project.org= § CHARTER now means geoscribe's charter. That charter is
+broader than nazca's test: all vector/raster math, CRS-dependent or not. The
+"geosetta keeps its own fold" conclusion in § WHY still holds, on the
+format-encoding line it draws./
+
+** WHY
+
+*** The reprojection of the corners is not the bbox of the reprojection
+Transforming an extent is not the same operation as transforming four points,
+and treating it as one is a classic, quiet data-loss bug. Projections curve:
+the image of a straight edge in the source CRS is generally *not* straight in
+the target, so an extremum of the transformed region routinely falls in the
+*interior* of an edge rather than at a corner.
+
+The standard demonstration is a geographic extent into a conic projection --
+reproject a wide lon/lat box into Lambert Conformal Conic and the northernmost
+point of the result lies at the middle of the top edge, not at either top
+corner. Fold only the four transformed corners and the resulting box is too
+short: every feature in that strip now sits outside an envelope that claims to
+contain it. Spatial indexes and bbox filters built on that envelope silently
+return wrong answers -- wrong in the worst direction, dropping real hits rather
+than adding false ones.
+
+This is why GDAL grew a dedicated entry point (=OCTTransformBounds=) rather
+than leaving callers to transform corners themselves, and it is the whole
+justification for this plan being a plan rather than four calls to
+=transform_to=.
+
+*** Why this is Nazca's, and not the caller's
+[[file:../../architecture.org][architecture.org]] gives the three crates no
+dependency edges, so "who owns it" cannot be settled by who is convenient to
+call. The line that settles it: *math whose result depends on the CRS or on
+coordinate transformation belongs here; a pure reduction over coordinates in
+whatever CRS they already sit in belongs to whoever holds the coordinates*
+(=../project.org= § CHARTER).
+
+An axis-aligned bbox fold is the second kind -- =geosetta= already does its own
+(=geosetta/plans/envelope.org=), and should keep doing it. A *transformed*
+bound is the first kind, and is unbuildable without the projection math this
+crate exists to hold. It also serves this crate's own callers directly, so it
+needs no cross-crate wiring to be useful.
+
+** SCOPE
+Given a bounding box in a source CRS, produce the tightest axis-aligned
+bounding box in a target CRS that provably contains the transformed region --
+or a clear failure when it cannot be computed.
+
+*Out of scope*:
+- Folding an envelope from a set of coordinates (=geosetta='s =Bbox=; see
+  =geosetta/plans/envelope.org=). This plan takes a bbox as *input*.
+- Transforming geometries themselves -- that is =transform_to= and the
+  =for_each_position_mut= seam, already covered by =reprojection.org=.
+- Raster extent/resolution computation (a warped raster's output grid needs
+  this result, but the grid math is its own problem and raster is out of scope
+  for the crate today -- see =../project.org= § CHARTER).
+
+** DESIGN
+
+*** Densify the edges, then fold
+The tractable approach, and the one the established tools take: sample points
+along each of the four edges rather than only at the corners, transform every
+sample, and fold the results. Accuracy rises with the sample count; cost is
+linear in it.
+
+#+begin_src rust
+/// The tightest axis-aligned box in `dst` containing this box's transformed
+/// region. `densify` is the number of intermediate points sampled along each
+/// edge; `0` degrades to corners-only, which is wrong for most projected
+/// targets (§ WHY) and is offered only for callers who know their transform
+/// is affine.
+pub fn transform_bounds(
+    &self,
+    bounds: Bounds,
+    dst: &Crs,
+    densify: u32,
+) -> Result<Bounds, TransformError>;
+#+end_src
+
+*Do not pick the default =densify= from memory or by analogy.* GDAL ships a
+default for =OCTTransformBounds=; read the real API documentation or its
+behavior on a real extent and match a deliberate choice against it, the way
+this project confirmed WKB's dimension codes and GPB's envelope layout against
+real output rather than inference. Record the number *and* the check in this
+file when it is made.
+
+*** Three failure modes that need decisions, not defaults
+1. *A sample that will not transform.* Points outside a CRS's area of use can
+   fail. Silently skipping them yields a box that is too small -- the same
+   wrong-direction error as corners-only, arrived at differently. The options
+   are: fail the whole call; return a partial box flagged as such; or clamp to
+   the area of use. *Leaning fail-loud* for v1, matching this ecosystem's
+   posture elsewhere (=geoscribe --identify= prints nothing and exits =2=
+   rather than guessing). Settle before implementing.
+2. *Antimeridian crossing.* An extent spanning ±180° folds, naively, into a box
+   spanning the entire globe -- technically containing the region, useless in
+   practice. Detecting the wrap and returning either a split pair of boxes or a
+   box with =min_x > max_x= (the GeoJSON/OGC convention for a crossing extent)
+   are both defensible. Not resolved here.
+3. *Pole inclusion.* A target extent containing a pole has its true bound at the
+   pole itself, which is on no edge of the source box unless the source box
+   reaches it. Edge densification alone will not find it. Needs an explicit
+   pole-containment check.
+
+None of the three is exotic; all three are ordinary for global or
+continental-scale data, which is precisely the data that gets reprojected.
+
+*** =Bounds=, not a borrowed type
+This crate defines its own =Bounds= (=min_x, min_y, max_x, max_y=, with Z
+deferred to the same milestone that makes =transform_to= 3D). It does *not*
+reuse =geosetta::Bbox=: no dependency edge exists, and per
+[[file:../../architecture.org][architecture.org]] Rule 2 a small, independent
+duplicate is the intended shape rather than something to apologize for.
+
+** MILESTONES
+- *TB1* -- =Bounds= type + =transform_bounds= with edge densification, over the
+  R5/R7 transform. Corners-only (=densify = 0=) available but documented as
+  wrong for curved transforms.
+- *TB2* -- The three failure modes above, each with its decision recorded here
+  before it is coded.
+- *TB3* -- Oracle tests against real =gdaltransform=/=cs2cs= output, the
+  skip-if-tool-missing way =geosetta/tests/reproject_pipe.rs= already does it.
+  The conic case from § WHY is the headline test: assert the result is
+  *strictly taller* than the corners-only fold, so a regression to corners-only
+  fails loudly rather than passing a tolerance check.
+- *TB4 (deferred, with R8)* -- 3D bounds, once =transform_to_3d= exists.
+
+** OPEN QUESTIONS
+- The default =densify= value, and whether it should scale with the extent's
+  size rather than being a constant. Needs the empirical check in § DESIGN
+  first.
+- Whether a raster-warp consumer (further out; see =../project.org= § CHARTER)
+  needs an output *grid* -- extent plus resolution -- rather than just an
+  extent, which would make this function the lower half of a larger one rather
+  than the whole answer.

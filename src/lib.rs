@@ -12,8 +12,8 @@
 //! for a caller that already knows which it has, and [`identify`] sniffs, uses
 //! an inline `id` when the definition states one, and says which evidence it
 //! used ([`Evidence`], `plans/projjson-identify.org`). `geosetta` was this
-//! crate's only consumer when it owned decoding itself; a second one ([nazca](https://github.com/dxgeo/nazca))
-//! is why that moved here instead.
+//! crate's only consumer when it owned decoding itself; a second planned one,
+//! a reprojection engine, is why that moved here instead.
 //!
 //! The embedded data is governed by the terms in `NOTICE` (PROJ, EPSG/IOGP, Esri,
 //! IGN France, IAU, NKG). It is a *derived* representation, not the official

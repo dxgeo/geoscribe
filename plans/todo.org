@@ -26,10 +26,11 @@ check it off and remove it once the item ships or is shelved.
   alone and resolve a real code. Vehicle changed 2026-08-18: =nazca='s path-dep
   and =geoscribe= feature were removed (no dependency edges between the three
   crates — see [[file:../../architecture.org][architecture.org]]), so use a
-  throwaway smoke-test crate, or better, a =dev-dependency= test on =nazca='s
-  side implementing its =CrsRegistry= trait over =resolve=. Nothing blocks the
-  latter: =nazca='s =[dev-dependencies]= is empty. The plan flags this as the
-  actual point of R6, not an afterthought.
+  throwaway smoke-test crate. /The other option it named -- a =dev-dependency=
+  test on =nazca='s side over its =CrsRegistry= trait -- went away on
+  2026-10-22, when reprojection moved here and =nazca= became a rendering
+  library./ The plan flags this as the actual point of R6, not an
+  afterthought.
 - [ ] *How far does this crate's charter extend?* — "own whatever geospatial
   metadata isn't a simple pass-through" is an easy bar to satisfy sloppily, and
   envelope computation is now a worked example of it being satisfied *wrongly*:
@@ -39,6 +40,33 @@ check it off and remove it once the item ships or is shelved.
   — no longer hosted in the retired plan
   ([[file:envelope-computation.org][envelope-computation.org]], RETIRED
   2026-08-18).
+
+  /2026-10-22: the math half is answered./ *All* vector and raster math
+  belongs here, whether or not it depends on the CRS (user decision;
+  =../project.org= § CHARTER). The line drawn against =geosetta= is
+  format encoding: values a format stores or needs in order to be written stay
+  in =geosetta=. What is still open is the *metadata* half: "not a simple
+  pass-through" has no falsifiable test yet.
+- [ ] [[file:reprojection.org::*STATUS -- SCOPING ONLY, NOT YET IMPLEMENTED][reprojection.org — the five reopened points]] —
+  the plan moved from =nazca= on 2026-10-22 and was written for a crate with
+  no registry. Settle before R1: whether the =CrsRegistry= trait survives,
+  whether =proj-db= ships, where Helmert and grid parameters come from (the
+  embedded registry holds definitions only), raster warping's place, and
+  vertical shift's priority now that KML has a consumer for it.
+- [ ] [[file:reprojection.org::*MILESTONES][reprojection.org — R1–R7]] —
+  =CrsDef= parsers (R1/R2), registry seam (R3/R4, see above), projection math
+  and Helmert shift (R5/R6), and the =Crs=/=transform_to= seam (R7), which is
+  what makes it usable. Oracle-checked against =cs2cs=/=ogr2ogr=.
+- [ ] [[file:reprojection.org::*MILESTONES][reprojection.org — R8 and vertical shift]] —
+  3D Helmert (R8), then the geoid-grid vertical shift deferred beyond it. The
+  second has a consumer: KML altitudes are EGM96 heights
+  ([[file:../../todo.org][../../todo.org]]; =geosetta/plans/kml-standard.org=
+  D-K12).
+- [ ] [[file:transform-bounds.org][transform-bounds.org]] — bbox
+  transformation by edge densification, plus its three failure modes. Depends
+  on R5/R7.
+- [ ] *A CLI mode that reprojects piped geometry* — from =nazca='s old
+  roadmap; see =../project.org= § ROADMAP. Not yet scoped.
 - [ ] [[file:crs-registry.org::*RISKS / REMAINING OPEN QUESTIONS][crs-registry.org — table currency]] —
   the registry is only as current as the =proj.db= it was generated from; a
   newer EPSG release means regenerating the blob *and* re-checking attribution.

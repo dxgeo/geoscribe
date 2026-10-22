@@ -47,6 +47,51 @@ reach this crate at all
 edges between the three crates). Kept as a standalone, reusable crate rather
 than data/logic owned by Geosetta itself.
 
+*Reprojection and vector/raster math joined this crate on 2026-10-22* (user
+decision). They were =nazca='s, and =nazca= becomes a rendering library. The
+reason is the one that put the registry here: the math needs the CRS database,
+and the database is here. Both plans moved with it, unimplemented:
+[[file:plans/reprojection.org][plans/reprojection.org]] and
+[[file:plans/transform-bounds.org][plans/transform-bounds.org]]. Read
+=reprojection.org='s § STATUS first: it was written for a crate with no
+registry, and five of its settled points are open again here.
+
+** CHARTER -- the math half
+/Decided 2026-10-22 (user decision)./
+
+#+begin_quote
+*All vector and raster math belongs here: operations that depend on the CRS
+and operations that do not.*
+#+end_quote
+
+- *CRS-dependent*: forward/inverse projection, datum shift (Helmert, grid,
+  vertical), transformed bounds
+  ([[file:plans/transform-bounds.org][plans/transform-bounds.org]]), geodesic
+  length and area, raster warping.
+- *CRS-independent*: planar measures, centroids, bounding boxes offered as an
+  operation, simplification, buffering, overlay and predicates, raster algebra
+  and resampling, and the like.
+
+*The one thing this does not move: what a format's own encoding requires*
+/(confirmed by the user, 2026-10-22: computation =geosetta= needs in order to
+read or write a file stays in =geosetta=)./
+=geosetta= computes the values its formats store or need in order to be written
+-- GeoParquet's =geo= bbox, the GeoPackage envelope and R*Tree, FlatGeobuf's
+packed index, =--sort-hilbert='s ordering
+([[file:../geosetta/plans/envelope.org][geosetta/plans/envelope.org]]). These
+are part of writing the format, not math offered to a user, and =geosetta=
+cannot reach this crate to get them anyway (no dependency edges,
+[[file:../architecture.org][../architecture.org]]). It is the same lesson
+envelope computation taught (§ ROADMAP, charter discipline): *ask whether the
+consumer can reach the capability at all.* A fold =geosetta= needs in order to
+write a file stays in =geosetta=. The same fold *as an operation a user runs*
+belongs here.
+
+/Superseded: on moving here this section first inherited =nazca='s narrower
+test -- "math whose result depends on the CRS belongs here; a pure reduction
+over coordinates belongs to whoever holds them". The user widened it the same
+day. The format-encoding line above is what is left of the old "Out" list./
+
 ** ARCHITECTURE
 Geoscribe is a *peer* of =geosetta= and =nazca=, not a layer beneath them.
 As of 2026-08-18 there are no dependency edges between any pair of the three
@@ -227,9 +272,21 @@ instead of quietly writing a mislabeled file.
 ** ROADMAP
 - [[file:plans/public-api.org][plans/public-api.org]] *R6e* — the acceptance
   test: a consumer with no =geosetta= dependency resolving a real code through
-  this crate alone. Open. The vehicle is now a throwaway smoke-test crate (or
-  a =dev-dependency= test on =nazca='s side), since =nazca= no longer carries
-  a path-dep on this crate to exercise.
+  this crate alone. Open. The vehicle is a throwaway smoke-test crate: =nazca=
+  was the other candidate, and it is no longer a reprojection crate.
+- [[file:plans/reprojection.org][plans/reprojection.org]] -- the reprojection
+  engine: CRS definition parsers, projection math, datum shift, and the
+  composability seam geosetta's =for_each_position_mut= exposes. Moved from
+  =nazca= 2026-10-22; *scoping only*. Its R8 (3D) and the geoid-grid vertical
+  shift beyond it now have a consumer: KML's EGM96 heights
+  ([[file:../todo.org][../todo.org]]).
+- [[file:plans/transform-bounds.org][plans/transform-bounds.org]] -- transform
+  a bbox across CRSes by edge densification. Moved from =nazca= 2026-10-22;
+  depends on =reprojection.org= R5/R7. *Scoping only.*
+- *A CLI mode that reprojects piped geometry* -- carried over from =nazca='s
+  roadmap: =geosetta in.geojson - --to wkt | geoscribe <reproject> | geosetta -
+  out.fgb --from wkt=. With the registry in the same binary, the source and
+  target CRS need no second process. Not yet scoped.
 - *Ambiguity is common enough to be worth revisiting* — over the Esri corpus,
   110 of 431 geographic and 891 of 2,274 projected =.prj= exports match more
   than one registry CRS equally well (typically a deprecated ESRI code beside
@@ -241,7 +298,8 @@ instead of quietly writing a mislabeled file.
   envelope fold and the GeoPackage writer gap are now
   [[file:../geosetta/plans/envelope.org][geosetta/plans/envelope.org]];
   transforming a bbox across CRSes is
-  [[file:../nazca/plans/transform-bounds.org][nazca/plans/transform-bounds.org]].
+  [[file:plans/transform-bounds.org][plans/transform-bounds.org]], back in this
+  crate since reprojection moved here (2026-10-22).
   The Cargo-feature question that gated it is moot — no crate has a feature
   gating a sibling crate any more.
 - *Registry currency* — the embedded data is only as current as the =proj.db=
@@ -260,14 +318,18 @@ instead of quietly writing a mislabeled file.
      dependency edges between the three crates
      ([[file:../architecture.org][../architecture.org]]), so a capability
      planned "for =geosetta='s benefit" has no delivery path by construction.
-  =nazca='s =project.org= § CHARTER is the model for what a bounded charter
-  looks like: a falsifiable test ("does this need to know *which* CRS the
-  coordinates are in?"), not a category.
+  The math half of § CHARTER is settled (all vector/raster math, with format
+  encoding left to =geosetta=). The *metadata* half still lacks the kind of
+  falsifiable test =nazca='s old charter had ("does this need to know *which*
+  CRS the coordinates are in?"), and that test's shape is still the model.
 
-*Non-goals*, unchanged: reprojection / coordinate transformation (that's
-=nazca=), embedding the *transformation* dataset (Helmert/grid pipelines —
-only CRS *definitions* are embedded), and any live runtime dependency on
-PROJ/GDAL.
+*Non-goals*: any live runtime dependency on PROJ/GDAL. /Revised 2026-10-22:/
+reprojection is no longer a non-goal; it moved here from =nazca=. *Embedding
+the transformation dataset* (Helmert/grid pipelines -- only CRS *definitions*
+are embedded today) was a non-goal too, and is now an *open question*:
+reprojection needs those parameters from somewhere, and the attribution gate
+that governs the definitions (=plans/crs-registry.org= § ATTRIBUTION) would
+govern them as well. See =plans/reprojection.org= § STATUS item 3.
 
 ** LICENSE
 MIT for the Rust code ([[file:LICENSE][LICENSE]]). The embedded CRS *data* is a

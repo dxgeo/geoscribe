@@ -36,7 +36,10 @@ consumer. It stops being reasonable with a second one: [[https://github.com/dxge
 definition= lookup -- reached, as of 2026-08-18, by a *caller* implementing
 =nazca='s =CrsRegistry= trait over this crate's =resolve= rather than by
 =nazca= depending on it, which does not change the argument below: either way
-the alternative was a second hand-written =GCR1= decoder. =geosetta='s own
+the alternative was a second hand-written =GCR1= decoder. /2026-10-22:
+reprojection has since moved into this crate (=reprojection.org=), so that
+consumer is now in-crate and calls =resolve= directly. The argument holds
+more strongly: there is one decoder, beside the data./ =geosetta='s own
 implementation
 (=src/crs/registry.rs=) isn't reusable -- =NamedCrs::registry_wkt=/
 =registry_wkt2= are =pub(crate)=, confirmed by reading =geosetta/src/crs.rs=
@@ -55,9 +58,9 @@ decode/serve half only.
 - Switch =geosetta='s =src/crs/registry.rs= to call that API instead of owning
   decode logic.
 - *Out of scope*: the generator, an in-Rust encoder (parked separately --
-  see nazca's =plans/reprojection.org= § OPEN QUESTIONS for where that
+  see =reprojection.org= (moved here from nazca 2026-10-22) § OPEN QUESTIONS for where that
   thread left off), the =GCR1= format itself (version 2, unchanged), and
-  =nazca='s =proj-db= live-database backend (a different registry entirely,
+  =reprojection.org='s =proj-db= live-database backend (a different registry entirely,
   not this blob).
 
 ** API SHAPE
@@ -215,7 +218,7 @@ into the lookup.
 
 ** NON-GOALS
 - An in-Rust encoder / regeneration pipeline (separate, parked plan).
-- =nazca='s =proj-db= live-database backend -- a different registry (a real
+- =reprojection.org='s =proj-db= live-database backend -- a different registry (a real
   on-disk =proj.db=, not this crate's embedded snapshot), unrelated to this API.
 - Any change to the =GCR1= format itself (still version =2=).
 - Baking identity-recovery/validation policy into =resolve=/=resolve_by_name=

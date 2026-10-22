@@ -20,7 +20,9 @@ or computed*, not copied. Two capabilities today:
   [`plans/projjson-identify.org`](plans/projjson-identify.org)).
 Envelope (bounding-box) computation was briefly planned here as a second
 capability. It was **retired on 2026-08-18 without being implemented** and moved
-to `geosetta` (the fold) and `nazca` (transforming a bbox across CRSes) — see
+to `geosetta` (the fold) and `nazca` (transforming a bbox across CRSes; that
+half returned here with reprojection on 2026-10-22, as
+[`plans/transform-bounds.org`](plans/transform-bounds.org)) — see
 [`plans/envelope-computation.org`](plans/envelope-computation.org) § STATUS.
 `geosetta` already owned a public `Bbox` fold and already wrote GeoParquet's
 `geo` bbox from it, so the "a value the consumer must derive" argument was

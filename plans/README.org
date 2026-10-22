@@ -54,8 +54,9 @@ Orientation for a session picking up the CRS work starts one level up, at
   settled on having no dependency edges. The envelope fold and the GeoPackage
   gap went to
   [[file:../../geosetta/plans/envelope.org][geosetta/plans/envelope.org]]; the
-  transform-a-bbox-across-CRSes problem it never covered went to
-  [[file:../../nazca/plans/transform-bounds.org][nazca/plans/transform-bounds.org]].
+  transform-a-bbox-across-CRSes problem it never covered went to =nazca=, and
+  came back with reprojection on 2026-10-22 as
+  [[file:transform-bounds.org][transform-bounds.org]].
   Kept for its reasoning trail and its empirically-confirmed GPB envelope
   layout. Read its § STATUS first — everything after it describes a dependency
   graph and a =crs-registry= feature that no longer exist.
@@ -77,3 +78,28 @@ Orientation for a session picking up the CRS work starts one level up, at
   =conversion_factor=) — that had been silently declining, and fixing them took
   every one of the 2,705 real Esri WKT fixtures to identifying, not just the
   PROJJSON corpus. See its § RESULTS.
+- [[file:reprojection.org][reprojection.org]] :: The reprojection engine --
+  =CrsDef= parsers (PROJJSON, WKT2:2019), projection math, Helmert datum
+  shift, a 3D seam (R8), and the =Crs=/=transform_to= seam geosetta's
+  =for_each_position_mut= takes. *Moved from =nazca= 2026-10-22, when
+  reprojection and vector/raster math became this crate's* (=../project.org=
+  § CHARTER). *Scoping only.* Its body was written for a crate with no
+  registry; read § STATUS for the five points that reopens.
+- [[file:transform-bounds.org][transform-bounds.org]] :: Transform a bbox across
+  CRSes by edge densification, because folding four transformed corners yields
+  an envelope too small to hold its own data. Three failure modes need
+  decisions: an untransformable sample, antimeridian crossing, pole inclusion.
+  *Depends on reprojection.org R5/R7.* Moved from =nazca= 2026-10-22.
+  *Scoping only.*
+- *WebAssembly* (cross-crate; lives at the repo root) :: This crate builds for
+  =wasm32-unknown-unknown= and =wasm32-wasip1= with zero source changes -- the
+  ported zstd decoder that [[file:public-api.org][public-api.org]] chose over a
+  dependency is precisely why -- and all 56 library tests pass under =wasmtime=,
+  with =resolve= returning WKT2/PROJJSON byte-identical to native. *The one open
+  question is the blob*: =GCR1= is a single zstd stream, so the first =resolve=
+  decompresses the whole 43 MB image (measured: 214 ms, heap to 43.3 MB; every
+  later lookup ~0 ms). Fine for WASI, Node, or a worker; heavy for a mobile
+  browser tab. Partial decode would require revising the container
+  [[file:registry-format.org][registry-format.org]] specifies, which
+  =wasm-plan.org= explicitly recommends *against* doing for this.
+  See [[file:../../wasm-plan.org][wasm-plan.org]].
