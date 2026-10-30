@@ -638,7 +638,11 @@ impl<'a> FrameDecoder<'a> {
         FrameDecoder {
             input,
             pos: 0,
-            out: Vec::with_capacity(expected),
+            // Reserve no more than an RLE block's 32768:1 could produce from
+            // this input. The registry passes a trusted constant, but this is
+            // geosetta's decoder (`compress/zstd.rs`), which reads sizes from
+            // files; the two copies keep the same guard.
+            out: Vec::with_capacity(expected.min(input.len().saturating_mul(32768))),
             expected,
             huf: None,
             prev: None,

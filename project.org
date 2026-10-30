@@ -87,6 +87,28 @@ consumer can reach the capability at all.* A fold =geosetta= needs in order to
 write a file stays in =geosetta=. The same fold *as an operation a user runs*
 belongs here.
 
+*The second thing this does not move: what rendering requires*
+/(user decision, 2026-10-29)./
+=nazca= cannot reach this crate either, and drawing a map needs render-time
+forms of math this charter otherwise claims: dropping vertices that share a
+device pixel, clipping to a viewport, triangulating polygons for the GPU,
+colormapping a raster band, placing labels, picking the feature under the
+cursor. Two questions, asked in order, decide which crate an operation
+belongs to:
+
+1. *Does it need to know the CRS?* Then it belongs here, always -- even when
+   its result is only displayed (warping a raster for display, converting to
+   geocentric XYZ for a globe). =nazca= holds no CRS data.
+2. *Is its result handed back to the caller as geometry or raster data?* Then
+   it belongs here. If it only ever becomes pixels, GPU buffers or a
+   screen-space answer (a picked feature id), it belongs to =nazca=.
+
+The cost is the same deliberate duplication as Rule 2
+([[file:../architecture.org][../architecture.org]]): some algorithms exist in
+both crates in different forms. =nazca='s same-pixel decimation is not this
+crate's simplification; a caller wanting real generalization runs this
+crate's and hands =nazca= the result. See =nazca/project.org= § CHARTER.
+
 /Superseded: on moving here this section first inherited =nazca='s narrower
 test -- "math whose result depends on the CRS belongs here; a pure reduction
 over coordinates belongs to whoever holds them". The user widened it the same

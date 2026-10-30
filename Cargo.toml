@@ -1,6 +1,6 @@
 [package]
 name = "geoscribe"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2024"
 description = "Geospatial metadata reader/writer: an embedded, authoritative CRS registry (all 13,790 CRSes in PROJ's proj.db) — resolve (authority, code) to PROJJSON/WKT1/WKT2, or identify an id-less WKT or PROJJSON by name validated against its own ellipsoid, reporting ambiguity rather than guessing. Zero dependencies; library + CLI. Rust code is MIT; the embedded CRS data carries third-party dataset terms — see NOTICE."
 license = "MIT"

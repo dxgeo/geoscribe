@@ -64,7 +64,7 @@ re-derive or re-implement it themselves**:
 ```toml
 # Cargo.toml
 [dependencies]
-geoscribe = "0.5.0"
+geoscribe = "0.5.1"
 ```
 
 ```rust
