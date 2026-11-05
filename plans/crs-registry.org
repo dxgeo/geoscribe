@@ -495,8 +495,13 @@ out and resolve its codes to an EPSG equivalent via =supersession=, or fall back
 
 ** NON-GOALS
 - Reprojection / coordinate transformation (unchanged; a separate future utility).
+  /Revised 2026-10-22: reprojection is this crate's now
+  ([[file:reprojection.org][reprojection.org]])./
 - Embedding the *transformation* dataset (Helmert/grid pipelines) — only CRS
-  *definitions* are embedded.
+  *definitions* are embedded. /Revised 2026-11-05: the Helmert table and
+  EGM96 are to be embedded, and grids read from the PROJ dataset or packs,
+  under § ATTRIBUTION's gate ([[file:transformation-data.org][transformation-data.org]]
+  D-T1, D-T7)./
 - A live dependency on PROJ/GDAL at runtime — the registry is generated static
   data, decoded by the crate's own codec.
 - *Upgrading* deprecated codes to their successors — identity is preserved as

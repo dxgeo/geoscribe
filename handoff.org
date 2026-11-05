@@ -11,6 +11,10 @@ rest of this crate's design docs live in =plans/=.
 ** READ THIS FIRST — WHAT HAS CHANGED SINCE
 Everything below is an accurate record of how the registry was *built*, and
 its § KEY FINDINGS is still the best account of what was tried and rejected.
+/Since 2026-10-22 the crate also owns reprojection, unimplemented: start at
+[[file:plans/reprojection.org][plans/reprojection.org]] § STATUS, and at
+[[file:plans/transformation-data.org][plans/transformation-data.org]] for where
+its datum-shift data comes from (decided 2026-11-05)./
 Two things it describes are no longer the present tense:
 
 1. *The =crs-registry= Cargo feature is gone.* =geosetta= 0.24.0 removed the

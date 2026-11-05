@@ -1,0 +1,358 @@
+#+TITLE: Plan: Transformation Data
+#+AUTHOR: Daniel Okuniewicz Jr.
+#+DATE: {{{time(%Y-%m-%d)}}}
+
+* Transformation Data -- where datum-shift parameters come from
+
+** STATUS -- SCOPING ONLY, NOT YET IMPLEMENTED
+/Decided 2026-11-05 (user decision)./ Answers
+[[file:reprojection.org][reprojection.org]] § STATUS item 3 and closes
+=../project.org='s open question on embedding the transformation dataset. Three
+sources, in this order of preference, and a tool:
+
+1. *Common defaults, embedded* (D-T1): the Helmert transformations from
+   =proj.db=, and EGM96.
+2. *The PROJ dataset, read for compatibility* (D-T2): every grid in a user's
+   PROJ installation, read losslessly from the files PROJ itself uses.
+3. *Compact packs* (D-T3): grids re-encoded in this crate's own format, which a
+   user builds with =geoscribe= from grids they have and can hand to others.
+
+Nothing here touches the network (D-T5). The measurements behind every
+decision are in § MEASURED.
+
+** WHY
+A CRS definition says what a CRS /is/. Reprojecting across datums -- NAD27 to
+WGS 84, OSGB36 to ETRS89 -- needs what a definition does not hold: how the two
+datums sit relative to each other, which is an empirical, surveyed fact. EPSG
+records it as /transformations between/ CRSes, not as part of either:
+
+- *Helmert* -- 3 or 7 numbers, metre-level. =proj.db= holds 2 668 current
+  ones, 1 191 of them 7-parameter.
+- *Grids* -- a raster of corrections, centimetre-level where one exists.
+  =proj.db= references 996 current grid transformations; PROJ's data package
+  ships 312 grid files, 761 MB.
+
+Neither is in the embedded registry today. Checked 2026-11-05: NAD27, OSGB36
+and RGF93 carry no TOWGS84 in their WKT and no BoundCRS in their PROJJSON, and
+=tools/gen_crs_registry.py= never reads the transformation tables.
+
+*There is no single path between two datums.* =proj.db= holds 30 current
+Helmert transformations from NAD27 to WGS 84, each for a region -- (1) the
+Caribbean at ±16 m, (4) CONUS at ±10 m, others east and west of the
+Mississippi -- and 9 from OSGB36 to WGS 84, from ±35 m to ±2 m. Using a
+transformation means choosing one by the data's location and the candidates'
+accuracy (D-T4), which corrects =reprojection.org='s earlier "v1 always takes
+the single Helmert path".
+
+** DECISIONS
+
+*** D-T1 -- the common defaults are embedded
+- *The Helmert table*, from =proj.db='s =helmert_transformation_table=: per
+  transformation its codes, source and target CRS, method, the 3 or 7
+  parameters, accuracy, and area-of-use extent. About 2.7k rows -- small, and
+  carried in the registry blob beside the definitions (§ MILESTONES T1).
+- *EGM96*, the geoid KML heights are in (=geosetta/plans/kml-standard.org=
+  D-K12), as its spherical-harmonic coefficients plus the land correction that
+  turns their height anomaly into geoid height. 0.215 MB of coefficients at a
+  step whose geoid change measured 0.17 mm rms, 1.1 mm max; the correction
+  0.36 MB as a 1 mm grid (§ MEASURED). The coefficients are EGM96's own
+  definition: the 15' grid PROJ ships is sampled from them.
+- *No grid is embedded by default.* The full set does not fit a crate at any
+  fidelity measured (§ MEASURED, the inventory), and which grids a user needs
+  is regional. Grids come from D-T2 and D-T3.
+
+Embedding transformation data extends the attribution gate
+([[file:crs-registry.org][crs-registry.org]] § ATTRIBUTION) to the
+transformation tables and to EGM96: =NOTICE= and =LICENSES/= gain their terms
+before release.
+
+*** D-T2 -- the PROJ dataset is read as it is, for compatibility
+A user with PROJ installed already has PROJ-data, and a transformation computed
+from the same grid PROJ uses is the one a user can check against =cs2cs=. So
+this crate reads PROJ's grid files directly:
+
+- *Where:* a path the user names, else =PROJ_DATA= (and the older =PROJ_LIB=),
+  else nothing. No search of guessed install prefixes the user did not name.
+- *Which file:* =proj.db='s =grid_alternatives= maps a transformation's grid
+  name to PROJ's file name (=conus= → =us_noaa_conus.tif=); the generator
+  carries that mapping into the blob with T1, so no =proj.db= is read at run
+  time.
+- *What it reads:* PROJ's grid GeoTIFFs. Surveyed 2026-11-05 across all 387
+  =.tif= files: DEFLATE (one file LZW), TIFF predictor 2 or 3, band- or
+  pixel-interleaved, several subgrids per file for NTv2-derived grids, bands
+  named by =latitude_offset=, =longitude_offset=, =geoid_undulation=,
+  =ellipsoidal_height_offset= and the like with a unit each, and an
+  =interpolation_method= of bilinear (the default) or biquadratic (the 27
+  NADCON5 files). The reader is this crate's own, as the zstd decoder is: a
+  TIFF/IFD walker, an inflate (and LZW) decoder, the two predictors.
+- *Exactly:* values are used as stored, interpolated by the method the file
+  declares. A grid read here is the grid PROJ reads.
+- *Not* a runtime dependency on PROJ (=../project.org='s non-goal stands):
+  these are data files, read without PROJ's software.
+
+*** D-T3 -- a compact pack format, and a command that builds it
+For users without PROJ, for distribution, and for grids worth carrying with an
+application, =geoscribe= builds *packs*: a file of grids in this crate's own
+format, which any =geoscribe= reads beside D-T1 and D-T2. The model is ICU4X's
+=datagen=: the crate ships the defaults, and a tool lets anyone build the data
+they need, a subset or a newer release, as a file they then point the library
+at.
+
+- *The command* (name open, § OPEN QUESTIONS) reads grids from the PROJ
+  dataset or named files -- all of them, or chosen by transformation, area or
+  agency -- and writes one pack. It never downloads: fetching grids stays the
+  user's own visible step (=projsync=, a package manager), as
+  [[file:../../architecture.org][../../architecture.org]]'s no-silent-exec rule keeps
+  every stage in the user's own command.
+- *The encoding*, measured in § MEASURED: each band quantised to a declared
+  step, predicted from its neighbours, and zstd-compressed; the subgrid
+  structure, georeferencing, units and interpolation method carried as read.
+  A band's step is the coarsest that meets the pack's fidelity bar (D-T6);
+  "lossless" is the band's native step, where the values sit on one, or full
+  float32 where they do not.
+- *Self-describing:* a pack records per band its step and the maximum error
+  that step introduced, per grid its source file's name and checksum, and each
+  grid's copyright and licence text as the source file states it (every
+  PROJ-data grid carries one in =TIFFTAG_COPYRIGHT=). A pack built for others
+  carries its own attribution.
+- *Versioned* like =GCR1= ([[file:registry-format.org][registry-format.org]]):
+  a reader rejects a pack whose version it cannot decode.
+
+*** D-T4 -- a transformation is chosen, and says what it used
+- *Selection* among candidates by the data's location against each
+  candidate's area of use, then by accuracy; a grid candidate is eligible only
+  when its grid is available (D-T1, a pack, or D-T2). A caller passes the
+  location as the data's bounding box -- =geosetta= has one for every
+  collection -- or as the point being transformed.
+- *Reporting:* every transformation reports which one it used (its EPSG code
+  and accuracy) and where its data came from (embedded, which pack, which PROJ
+  file), so a result can be traced and compared with PROJ's.
+- *Never a silent fallback.* When no transformation is known between two
+  datums, or the one that applies needs a grid nobody supplied, the answer is
+  a refusal naming what is missing, or -- when the caller asks for one -- a
+  stated approximation with a warning. Never the datum difference silently
+  ignored (PROJ's "ballpark"), and never a Helmert quietly standing in for a
+  grid.
+
+*** D-T5 -- no network
+This crate does not fetch data. PROJ's CDN (=cdn.proj.org=) and =projsync= are
+how a user gets PROJ-data; D-T2 then reads what they fetched. A build-time
+download (=build.rs=) is ruled out with it: it breaks offline and sandboxed
+builds and hides network access inside =cargo build=.
+
+*** D-T6 -- a pack's fidelity bar is the builder's to state
+Open in its default (§ OPEN QUESTIONS), settled in its shape: the pack command
+takes the bar -- =lossless=, or a tolerance -- and every pack records the
+bar it was built to and the error each band carries (D-T3). D-T2 is always
+exact, so a user who needs PROJ's grid bit for bit has it.
+
+*** D-T7 -- each grid keeps its own terms, and a pack honours them
+/Checked 2026-11-05 against PROJ-data's =copyright_and_licenses.csv= and
+agency READMEs, which are more complete than the files' =TIFFTAG_COPYRIGHT=
+(HeTA2010's tag says only "HVBG"; the table gives its licence)./ Nothing
+conflicts with this crate's MIT licence: the code and the data are licensed
+separately, as the embedded registry already is (=NOTICE=, =LICENSES/=). What
+the terms govern is a pack, which re-encodes a grid and so is a modified copy:
+
+| terms                                                              | grids | in a pack                                       |
+|--------------------------------------------------------------------+-------+-------------------------------------------------|
+| public domain, CC0 (NOAA, NGA, NRCan, Swisstopo, Lantmäteriet)     | ~138  | no conditions                                   |
+| attribution: CC BY 4.0, Etalab, OGL-Canada, DL-DE-BY 2.0, BSD-2    | ~166  | credit, licence text, and a statement of change |
+| CC BY-SA 4.0 (IBGE Brazil ×4, BME Hungary ×2)                      | 6     | the grid stays BY-SA inside the pack            |
+| "free redistribution is allowed and welcome" (AdV BeTA2007)        | 1     | excluded: modification is not granted           |
+
+- *The pack command reads the licence table*, not the TIFF tag, records each
+  grid's licence and copyright in the pack (D-T3), and writes the statement of
+  change CC BY 4.0 requires: re-encoded by =geoscribe=, at the step and error
+  the pack records.
+- *A grid whose terms do not grant modification is left out*, and the command
+  says so by name. A user building a pack for their own use can include it by
+  naming it, and the pack marks it as not for redistribution.
+- *A pack is a collection.* A BY-SA grid keeps its terms within it and does
+  not change the terms of the code or of the pack's other grids.
+- *The embedded defaults* (D-T1): the Helmert table is EPSG data, under the
+  IOGP terms the registry already carries (acknowledgement, modified data
+  marked as derived, no charge for the data); EGM96 is NGA's work, a US
+  government work and public domain, whoever mirrors it.
+- *Reading a user's own PROJ files* (D-T2) redistributes nothing.
+
+** MEASURED -- 2026-11-05
+The scripts that produced every figure below, and the per-file inventory as
+=inventory.csv=, are in [[file:../tools/grid-study/README.md][../tools/grid-study/]];
+its README says which script gave which result and how to rerun it against a
+PROJ installation. "Step" is the quantisation step: 0.3 mm means 1e-5 arc-second for
+horizontal offsets, 0.1 mm means 1e-4 m for heights. Maximum error is half the
+step, checked on every band.
+
+*** The whole PROJ dataset
+312 grid files, every band read band-sequential, every subgrid, accuracy bands
+dropped (PROJ reads only the offset channels; =libproj= names no accuracy
+channel), neighbour-predicted, zstd -19:
+
+| kind       | files | as shipped | 0.3 / 0.1 mm step | 3 / 1 mm step |
+|------------+-------+------------+-------------------+---------------|
+| horizontal |   158 | 300.8 MB   | 46.6 MB (6.5×)    | 23.2 MB (13×) |
+| …NADCON5   |    27 | 99.9 MB    | 7.9 MB            | 3.7 MB        |
+| vertical   |   154 | 460.6 MB   | 186.3 MB (2.5×)   | 132.1 MB (3.5×) |
+
+Ten Canadian geoid files (CGG2013, HT2) grow at a 0.1 mm step: their values
+were published coarser than that, so a step finer than the native one wastes
+bits, as D-T3's per-band native step avoids.
+
+*** What else was tried, and what it gave
+- *Lossless at native precision* is about 2× smaller than PROJ's GeoTIFFs
+  (OSTN15 3.04 → 1.61 MB, EGM96 2.71 → 1.84, GEOID18 16.7 → 8.1). Most
+  horizontal grids have no step coarser than float32's own, so their
+  "lossless" size is mostly float32's bottom bits.
+- *A coarse-to-fine (SZ3-style) predictor* came out level with the neighbour
+  predictor; *an entropy coder* better than zstd would gain under 10% (zstd is
+  within a few percent of the context-model bound). *No grid is upsampled*;
+  *no metric lattice* hides under the arc-second values; *no filler* (no-data,
+  zeros, repeated runs) pads the rectangles.
+- *Spherical-harmonic models.* EGM96's coefficients reproduce PROJ's 15' grid to
+  2 mm at the median, the oceans, and the grid's constant offset of −0.531 m is
+  EGM96's zero-degree term; the rest, up to 3.7 m over land, is the
+  height-anomaly-to-geoid correction NGA added from a separate model. Total
+  0.57 MB at 1 mm (0.215 coefficients + 0.357 correction) against 0.98 MB for
+  the grid at 1 mm. EGM2008 gives no such win: its 4.8M coefficients need a
+  step that shrinks with degree -- the (a/r)^n factor reaches ~1 600 at the
+  pole at degree 2190 -- and cost 7.4 MB for 1 mm rms, and its 2.5' land
+  correction comes from terrain; together ~14--15 MB against 16.3 MB for its
+  grid at 1 mm.
+- *Coding a national geoid as its residual from EGM2008's grid* did not help
+  (GEOID18, GCG2016, EGM08-REDNAP, AUSGeoid2020): the national grids are finer
+  than EGM2008's, so interpolating it adds error the residual carries.
+- *NADCON5 from its own source.* NGS publishes the whole build
+  (=geodesy.noaa.gov/pub/nadcon5/20160901release/=): for 2007 → 2011 CONUS,
+  58 460 thinned control points per band and the command that gridded them,
+  =surface … -I1.00m -T0.4 -A0.7986 -C0.01=. The points cost 0.6 MB for all
+  three bands against 40 MB shipped. GMT 6.7's =surface= on those points with
+  that command matches PROJ's grid to 0.3 mm at the median near the data, but
+  not to the grid: the 99th percentile is 4--7 mm and the worst 4--6 cm even
+  beside control points, and 3 mm median far from them (a third of the grid,
+  offshore and beyond the border). NGS ran an older GMT, whose =surface= was
+  reworked after version 4, and =-C0.01= stops the iteration at 1 cm, so the
+  published grid's last digits are where that solver stopped. Not adopted:
+  the source does not give PROJ's grid back.
+
+*** The details behind them
+- *Per-file ratios vary 2--40×*, so no sample stands for the set: at the
+  0.3 / 0.1 mm step, =us_noaa_conus= 0.17 → 0.08 MB, NTv2 Canada (all 114
+  subgrids) 7.78 → 2.36, OSTN15 3.04 → 0.99, EGM96 2.71 → 1.38, BWTA2017
+  73.0 → 17.0, EGM2008 80.6 → 30.6, NADCON5 2007 → 2011 CONUS 40.0 → 2.5
+  (1.0 at 3 mm; 12.9 lossless). An estimate of the total from seven files
+  (130--250 MB) was far off the measured one; the table above replaces it.
+- *Accuracy bands* -- NTv2's per-node shift accuracy, kept by PROJ's
+  conversion -- were 40% of the Canadian grid's re-encoded size. =libproj='s
+  strings name the offset channels and no accuracy channel, which is
+  evidence, not a reading of its source, that PROJ ignores them.
+- *Native steps* found: 1e-6 arc-second (CONUS, OSTN15, BWTA2017), 1e-5
+  arc-second (NTv2 Canada), 1e-5 m (the geoids); NADCON5's latitude and
+  longitude bands have none coarser than float32.
+- *Where a neighbour predictor spends its bits*: at the 0.3 mm step, 97.6% of
+  NADCON5's nodes cost about nothing, 58% of BWTA2017's, 43% of OSTN15's, 4% of
+  GEOID18's, 1% of EGM2008's -- the shift grids are smooth, the geoids carry
+  terrain.
+- *EGM96 at its own formal errors*: quantising each coefficient to a quarter
+  of its σ moved the geoid 34 mm rms, 189 mm max -- far too coarse; a uniform
+  step sized for the geoid change is the one that works (0.215 MB for 0.17 mm
+  rms, 1.1 mm max; 0.158 MB for 1.7 mm rms, 10.6 mm max).
+- *EGM2008 against PROJ's 2.5' grid*, over |lat| ≤ 57°: model and grid differ
+  by a constant −0.41 m (the zero-degree term against WGS 84), then 1 mm at
+  the median, 4 cm at the 90th percentile, 0.94 m at the 99th and 6.1 m at
+  most -- the land correction. That correction, as a grid, cost 6.0 MB at 1 mm
+  over the band (63% of the rows), against 12.5 MB for the grid itself there.
+- *Why EGM2008's step shrinks with degree*: a coefficient's error reaches the
+  geoid scaled by (a/r)^n, a the model's equatorial radius, r the ellipsoid's
+  at that latitude. Random errors sized for 1 mm rms came back, at degrees
+  1001--2190, 0.85 mm at the equator, 1.7 at 20°, 10.9 at 40° and 58.8 at 55°.
+  A uniform step for 1 mm rms gave 19.6 mm rms and 324 mm max over the band; a
+  step of d0·(r_edge/a)^n gave 0.37 mm rms and 5.0 mm max for 6.1 MB, and
+  7.4 MB sized for the pole.
+- *Synthesis cost*: degree 360 over the 15' grid in under 4 s of numpy;
+  degree 2190 over 2 736 × 8 640 nodes in 67 s, with the sectoral recursion
+  scaled by 1e280 and computed in logs, valid to about 57°.
+- *NADCON5's build*, 2007 → 2011 CONUS: 73 707 marks with both coordinates,
+  median-thinned to 58 460 for =surface= (lat and lon share positions; height
+  58 575), values in metres to 3 decimals. The published grid's value at each
+  point, converted to metres, correlates 0.99 with the point's. NGS's logs do
+  not record the GMT version. GMT 6.7 against PROJ's grid, latitude, by
+  distance to the nearest control point:
+
+  | distance        | share of nodes | p50 (mm) | p99 (mm) | max (mm) |
+  |-----------------+----------------+----------+----------+----------|
+  | ≤ 1 cell (~1.6 km) |   6%       |   0.27   |   4.5    |   43     |
+  | 4--6 cells      |  12%           |   0.29   |   6.1    |   59     |
+  | 7--15 cells     |  22%           |   0.30   |   7.3    |   50     |
+  | 31--60 cells    |   7%           |   0.77   |  20      |   41     |
+  | > 60 cells      |  34%           |   2.7    |  62      |   86     |
+
+  Longitude is alike; height about five times tighter.
+- *A trap for T2's reader*: GDAL keeps a source's interleave, and NADCON5's
+  GeoTIFFs are pixel-interleaved while nearly every other grid is
+  band-sequential. Read as band-sequential, NADCON5's bands interleave into
+  noise and look 3--40× less compressible than they are; the first
+  measurements here made that mistake. T2's oracle against =gdallocationinfo=
+  is what catches it.
+
+** MILESTONES
+- *T1* -- The Helmert table, with each transformation's area-of-use extent and
+  accuracy, and =grid_alternatives='s name mapping, in the registry blob: a
+  =GCR1= version step ([[file:registry-format.org][registry-format.org]]),
+  which the =deprecated= flag ([[file:wkt-identify.org][wkt-identify.org]]
+  § OPEN QUESTIONS) can share. Attribution checked for the new tables.
+- *T2* -- Reading the PROJ dataset (D-T2): the TIFF reader, inflate and LZW,
+  both predictors, both interleaves, subgrids; bilinear and biquadratic
+  interpolation. Oracle: a sample at random points of every installed grid
+  against =gdallocationinfo=, and transformations through each against
+  =cs2cs= (skip-if-missing at run time, as
+  =geosetta/tests/reproject_pipe.rs= does).
+- *T3* -- EGM96 embedded (D-T1): the coefficients and the land correction,
+  and the synthesis -- fully normalised Legendre functions on the ellipsoid,
+  height anomaly scaled by normal gravity, plus the correction. Oracle: PROJ's
+  =us_nga_egm96_15.tif= through T2, everywhere, within the bar the embedded
+  form was built to.
+- *T4* -- The pack format and the command that builds it (D-T3, D-T6), and
+  reading packs beside T1 and T2. Oracle: a pack built lossless reads back
+  equal to its source at every node; one built to a tolerance stays inside it
+  at every node, as recorded.
+- *T5* -- Selection and reporting (D-T4), which is part of
+  [[file:reprojection.org][reprojection.org]] R6.
+
+T1 and T4's encoder need what this crate does not have yet: an inflate
+decoder for T2, and a zstd /encoder/ for T4 (the crate carries a decoder only).
+
+** OPEN QUESTIONS
+- *The pack command's default bar* (D-T6) -- =lossless=, which is exact but
+  about 2× PROJ's size for most grids, or a tolerance far below each grid's
+  accuracy, such as 0.3 mm (46.6 MB for every horizontal grid). A tolerance
+  changes no transformation by more than it states, but does change values.
+- *The zstd encoder* T4 needs -- write one (as the decoder was), or have the
+  pack format use a simpler entropy coder this crate can write in less code,
+  at some cost in size. Measure before choosing.
+- *EGM96's land correction as coefficients.* NGA published it as a second
+  degree-360 coefficient set, which would make the correction exact and the
+  whole model about 0.4 MB; =earth-info.nga.mil= timed out from here on
+  2026-11-05, and ICGEM carries only the potential coefficients. Until it is
+  in hand, T3 stores the correction as a grid.
+- *The command's name* -- =pack-grids=, =datagen=, or a subcommand family.
+- *Packs from others* -- whether this project publishes ready-made packs (by
+  region, as release assets or separate data crates of a few MB each), or
+  leaves building them to users. A published pack carries IOGP's no-charge
+  condition only if it carries EPSG data; grids alone carry their own terms
+  (D-T7).
+- *AdV BeTA2007's terms* -- "free redistribution is allowed and welcome" does
+  not mention modification. Asking AdV, or a lossless pack counting as a
+  redistribution in another form, would let D-T7 include it.
+
+** DEPENDS ON / RELATED
+- [[file:reprojection.org][reprojection.org]] -- R6 (datum shift) consumes
+  T1, T2 and T5; R8's vertical shift consumes T3 and geoid grids.
+- [[file:registry-format.org][registry-format.org]] -- T1 is a =GCR1=
+  version step.
+- [[file:crs-registry.org][crs-registry.org]] § ATTRIBUTION -- the gate T1 and
+  T3 pass through, and that D-T3's packs carry for themselves.
+- =geosetta/plans/kml-standard.org= D-K12 -- KML heights in EGM96, the
+  consumer of T3.
+- [[file:../../architecture.org][../../architecture.org]] -- no dependency edges and
+  no silent exec, which D-T2's data-file reading and D-T5 keep.

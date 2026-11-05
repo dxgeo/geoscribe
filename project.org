@@ -54,7 +54,10 @@ and the database is here. Both plans moved with it, unimplemented:
 [[file:plans/reprojection.org][plans/reprojection.org]] and
 [[file:plans/transform-bounds.org][plans/transform-bounds.org]]. Read
 =reprojection.org='s § STATUS first: it was written for a crate with no
-registry, and five of its settled points are open again here.
+registry, and five of its settled points are open again here. One has
+since been decided: where datum-shift data comes from
+([[file:plans/transformation-data.org][plans/transformation-data.org]],
+2026-11-05).
 
 ** CHARTER -- the math half
 /Decided 2026-10-22 (user decision)./
@@ -302,6 +305,11 @@ instead of quietly writing a mislabeled file.
   =nazca= 2026-10-22; *scoping only*. Its R8 (3D) and the geoid-grid vertical
   shift beyond it now have a consumer: KML's EGM96 heights
   ([[file:../todo.org][../todo.org]]).
+- [[file:plans/transformation-data.org][plans/transformation-data.org]] --
+  where datum-shift parameters come from: the embedded Helmert table and
+  EGM96, the PROJ dataset read for compatibility, and compact grid packs built
+  by =geoscribe=. Decided 2026-11-05; *scoping only*. Feeds
+  =reprojection.org= R6 and R8.
 - [[file:plans/transform-bounds.org][plans/transform-bounds.org]] -- transform
   a bbox across CRSes by edge densification. Moved from =nazca= 2026-10-22;
   depends on =reprojection.org= R5/R7. *Scoping only.*
@@ -347,11 +355,15 @@ instead of quietly writing a mislabeled file.
 
 *Non-goals*: any live runtime dependency on PROJ/GDAL. /Revised 2026-10-22:/
 reprojection is no longer a non-goal; it moved here from =nazca=. *Embedding
-the transformation dataset* (Helmert/grid pipelines -- only CRS *definitions*
-are embedded today) was a non-goal too, and is now an *open question*:
-reprojection needs those parameters from somewhere, and the attribution gate
-that governs the definitions (=plans/crs-registry.org= § ATTRIBUTION) would
-govern them as well. See =plans/reprojection.org= § STATUS item 3.
+the transformation dataset* was a non-goal too. /Decided 2026-11-05 (user
+decision), in [[file:plans/transformation-data.org][plans/transformation-data.org]]:/
+the common defaults are embedded -- the Helmert table and EGM96 -- under the
+same attribution gate as the definitions (=plans/crs-registry.org=
+§ ATTRIBUTION); every grid in a user's PROJ dataset is read as it is, for
+compatibility; and =geoscribe= builds compact grid packs others can use. No
+grid is embedded by default and nothing is fetched from the network. Reading
+PROJ's data files is not a runtime dependency on PROJ, which stays a
+non-goal.
 
 ** LICENSE
 MIT for the Rust code ([[file:LICENSE][LICENSE]]). The embedded CRS *data* is a

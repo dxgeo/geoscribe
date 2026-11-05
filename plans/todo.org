@@ -50,9 +50,16 @@ check it off and remove it once the item ships or is shelved.
 - [ ] [[file:reprojection.org::*STATUS -- SCOPING ONLY, NOT YET IMPLEMENTED][reprojection.org — the five reopened points]] —
   the plan moved from =nazca= on 2026-10-22 and was written for a crate with
   no registry. Settle before R1: whether the =CrsRegistry= trait survives,
-  whether =proj-db= ships, where Helmert and grid parameters come from (the
-  embedded registry holds definitions only), raster warping's place, and
-  vertical shift's priority now that KML has a consumer for it.
+  whether =proj-db= ships, raster warping's place, and vertical shift's
+  priority now that KML has a consumer for it. /Where Helmert and grid
+  parameters come from was settled 2026-11-05:/ the entry below.
+- [ ] [[file:transformation-data.org][transformation-data.org]] — the
+  datum-shift data. T1 the Helmert table in the blob (a =GCR1= step, which
+  the =deprecated= flag above can share); T2 reading the PROJ dataset's grids
+  as they are; T3 EGM96 embedded as coefficients; T4 the compact pack format
+  and the command that builds it; T5 choosing a transformation and saying
+  which. Open: the pack command's default bar (lossless or a stated
+  tolerance), and the zstd encoder T4 needs.
 - [ ] [[file:reprojection.org::*MILESTONES][reprojection.org — R1–R7]] —
   =CrsDef= parsers (R1/R2), registry seam (R3/R4, see above), projection math
   and Helmert shift (R5/R6), and the =Crs=/=transform_to= seam (R7), which is

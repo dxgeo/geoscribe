@@ -84,7 +84,20 @@ Orientation for a session picking up the CRS work starts one level up, at
   =for_each_position_mut= takes. *Moved from =nazca= 2026-10-22, when
   reprojection and vector/raster math became this crate's* (=../project.org=
   § CHARTER). *Scoping only.* Its body was written for a crate with no
-  registry; read § STATUS for the five points that reopens.
+  registry; read § STATUS for the five points that reopens, one of them since
+  decided in [[file:transformation-data.org][transformation-data.org]].
+- [[file:transformation-data.org][transformation-data.org]] :: Where
+  datum-shift parameters come from. The common defaults are embedded (the
+  Helmert table from =proj.db=, and EGM96 as its spherical-harmonic
+  coefficients); every grid in a user's PROJ dataset is read as it is, for
+  compatibility with PROJ; and =geoscribe= builds compact grid packs, in its
+  own format, for others to use. No network. Chooses a transformation by area
+  of use and accuracy, and says which it used. Carries the 2026-11-05
+  measurements behind it: all 312 PROJ grid files re-encoded, EGM96 and
+  EGM2008 as coefficients, and NADCON5 rebuilt from NGS's own control points;
+  the scripts and the per-file inventory are in =../tools/grid-study/=.
+  *Answers reprojection.org § STATUS item 3; feeds its R6 and R8.* Decided
+  2026-11-05. *Scoping only.*
 - [[file:transform-bounds.org][transform-bounds.org]] :: Transform a bbox across
   CRSes by edge densification, because folding four transformed corners yields
   an envelope too small to hold its own data. Three failure modes need
